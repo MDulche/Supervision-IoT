@@ -35,8 +35,18 @@ DOCROOT="${DOCROOT:-/var/www/dashboard}"   # dossier du dashboard
 PROBE_URL="${PROBE_URL:-}"                 # ex : http://localhost/index.php (test exécution PHP, optionnel)
 # ============================================================================
 
-# ---- couleurs (désactivées si pas un terminal) ----
-if [ -t 1 ]; then
+# ---- rapport (fichier) + pause : pour ne rien perdre quand la fenêtre se ferme ----
+NO_REPORT="${NO_REPORT:-0}"; NO_PAUSE="${NO_PAUSE:-0}"; NO_RECAP="${NO_RECAP:-0}"
+SERVER_NAME="${SERVER_NAME:-www.dashboard.local}"
+REPORT="${REPORT:-rapport-audit-$(date +%Y%m%d-%H%M%S).txt}"
+[ -t 1 ] && _TTY=1 || _TTY=0
+if [ "$NO_REPORT" != 1 ]; then
+  # tout s'affiche À L'ÉCRAN et s'enregistre AUSSI dans le rapport (sans codes couleur)
+  exec > >(tee >(sed -u 's/\x1b\[[0-9;]*m//g' >> "$REPORT")) 2>&1
+fi
+
+# ---- couleurs (à l'écran uniquement) ----
+if [ "$_TTY" = 1 ]; then
   R=$'\e[31m'; G=$'\e[32m'; Y=$'\e[33m'; B=$'\e[36m'; BOLD=$'\e[1m'; DIM=$'\e[2m'; N=$'\e[0m'
 else
   R=""; G=""; Y=""; B=""; BOLD=""; DIM=""; N=""
@@ -340,5 +350,33 @@ elif [ "$FAILN" -eq 0 ]; then
 else
   echo "  ${R}${BOLD}Des problèmes bloquants restent à corriger (voir FAIL).${N}"
 fi
+# =====================================================================
+if [ "$NO_RECAP" != 1 ]; then
+section "Récapitulatif (à noter)"
+SRV_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"; SRV_IP="${SRV_IP:-IP_DU_SERVEUR}"
+SRV_USER="${SUDO_USER:-${USER:-utilisateur}}"
+echo "  Base de données   : $DB_NAME"
+echo "  Utilisateur BDD   : $DB_APP_USER"
+echo "  Mot de passe BDD  : ${DB_APP_PASS:-<voir $DOCROOT/config.php>}"
+echo "  Dossier du site   : $DOCROOT"
+echo "  Fichier de conf   : $DOCROOT/config.php"
+echo "  VirtualHost       : /etc/apache2/sites-available/dashboard.conf"
+echo "  Logs Apache       : /var/log/apache2/error.log"
+echo "  URL du dashboard  : http://$SERVER_NAME/   (ou http://$SRV_IP/)"
 echo
+echo "  ${BOLD}Transférer le site depuis TON PC (commandes scp) :${N}"
+echo "    # 1) sur ton PC, dans le dossier qui contient 'dashboard/' :"
+echo "    scp -r dashboard ${SRV_USER}@${SRV_IP}:/tmp/"
+echo "    # 2) puis ICI, sur le serveur, déposer au bon endroit :"
+echo "    sudo cp -r /tmp/dashboard/* $DOCROOT/ && sudo chown -R www-data:www-data $DOCROOT"
+echo "    # un seul fichier (ex. index.php) :"
+echo "    scp index.php ${SRV_USER}@${SRV_IP}:/tmp/ && sudo mv /tmp/index.php $DOCROOT/"
+fi
+
+echo
+[ "$NO_REPORT" != 1 ] && echo "  ${DIM}Rapport enregistré dans : $REPORT${N}"
+if [ "$NO_PAUSE" != 1 ] && [ "$_TTY" = 1 ]; then
+  printf "  Appuie sur Entrée pour fermer… "; read -r _
+fi
+[ "$NO_REPORT" != 1 ] && sleep 0.2
 exit $([ "$FAILN" -eq 0 ] && echo 0 || echo 1)

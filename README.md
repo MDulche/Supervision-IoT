@@ -76,6 +76,8 @@ Ce qu'il fait : paquets (`apache2`, `mysql-server`, `php`, `libapache2-mod-php`,
 - Si le repo contient un dossier `dashboard/`, c'est **le tien** qui est déployé ; sinon un dashboard minimal fonctionnel (page auto-rafraîchie + `data.php`) est généré.
 - Le mot de passe applicatif : fourni via `DB_APP_PASS`, sinon **généré** et écrit dans `config.php` (affiché une fois). Un `config.php` existant n'est jamais écrasé.
 
+À la fin, le script **n'efface pas l'écran** : il **écrit un rapport horodaté** (`rapport-install-*.txt`, sans codes couleur), **marque une pause** (« Appuie sur Entrée pour fermer… ») et affiche un **récapitulatif** — nom de la base, utilisateur BDD, mot de passe, dossier du site, URL, VirtualHost — suivi des **commandes `scp`** pour transférer le site depuis ton PC vers le serveur. Options : `--no-report`, `--no-pause`.
+
 > Après installation, ouvre `http://www.dashboard.local/` (l'entrée `/etc/hosts` est ajoutée automatiquement) ou `http://localhost/`.
 
 ### Option B — manuelle (pour comprendre / personnaliser)
@@ -193,7 +195,7 @@ Paramètres (variables d'environnement, sinon valeurs par défaut du script) :
 
 Ce que l'audit contrôle : PHP + extensions (`pdo_mysql`, `json`), Apache (actif, PHP exécuté et non téléchargé, ports), MySQL (actif, port 3306), base `supervision`, table `mesures` (présente et non vide), compte `iot_app` et ses droits, **connexion PDO réelle**, fichiers du dashboard et droits du `config.php`.
 
-Le script renvoie le code de sortie `0` si aucun `FAIL`, `1` sinon.
+Le script renvoie le code de sortie `0` si aucun `FAIL`, `1` sinon. Comme l'installeur, il **écrit un rapport** (`rapport-audit-*.txt`), **fait une pause** à la fin et affiche le **récapitulatif** (base, utilisateur, dossier du site, URL) avec les **commandes `scp`**. Désactivables via `NO_REPORT=1` / `NO_PAUSE=1` (ou `--no-report` / `--no-pause` pour l'installeur et la remédiation).
 
 ---
 
@@ -222,6 +224,8 @@ Options :
 | `--yes`      | `ASSUME_YES=1`  | n'attend pas de confirmation |
 | `--seed`     | `SEED=1`        | insère quelques mesures de **test** si la table est vide |
 | `--tighten`  | `TIGHTEN=1`     | resserre un compte qui aurait `ALL PRIVILEGES` (→ `SELECT`/`INSERT`) |
+| `--no-report`| `NO_REPORT=1`   | n'écrit pas le rapport `rapport-fix-*.txt` |
+| `--no-pause` | `NO_PAUSE=1`    | ne marque pas la pause finale |
 
 Gestion du mot de passe applicatif : si `DB_APP_PASS` n'est pas fourni, le script le **récupère depuis `config.php`** s'il existe ; sinon il en **génère un**, l'écrit dans un `config.php` neuf et l'affiche une fois. Un `config.php` existant n'est **jamais écrasé**.
 

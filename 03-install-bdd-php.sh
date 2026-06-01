@@ -39,16 +39,20 @@ DOCROOT="${DOCROOT:-/var/www/dashboard}"
 SERVER_NAME="${SERVER_NAME:-www.dashboard.local}"
 TZ_WANTED="${TZ_WANTED:-Europe/Paris}"
 
-DRY_RUN="${DRY_RUN:-0}"; ASSUME_YES="${ASSUME_YES:-0}"; SEED="${SEED:-1}"
+DRY_RUN="${DRY_RUN:-0}"; ASSUME_YES="${ASSUME_YES:-0}"; SEED="${SEED:-1}"; NO_REPORT="${NO_REPORT:-0}"; NO_PAUSE="${NO_PAUSE:-0}"
 # ============================================================================
 
 for a in "$@"; do case "$a" in
   --dry-run) DRY_RUN=1 ;; --yes|-y) ASSUME_YES=1 ;; --no-seed) SEED=0 ;; --seed) SEED=1 ;;
+  --no-report) NO_REPORT=1 ;; --no-pause) NO_PAUSE=1 ;;
   -h|--help) sed -n '2,40p' "$0"; exit 0 ;;
   *) echo "Option inconnue : $a"; exit 2 ;;
 esac; done
 
-if [ -t 1 ]; then R=$'\e[31m';G=$'\e[32m';Y=$'\e[33m';B=$'\e[36m';BOLD=$'\e[1m';DIM=$'\e[2m';N=$'\e[0m';
+REPORT="${REPORT:-rapport-install-$(date +%Y%m%d-%H%M%S).txt}"
+[ -t 1 ] && _TTY=1 || _TTY=0
+if [ "$NO_REPORT" != 1 ]; then exec > >(tee >(sed -u 's/\x1b\[[0-9;]*m//g' >> "$REPORT")) 2>&1; fi
+if [ "$_TTY" = 1 ]; then R=$'\e[31m';G=$'\e[32m';Y=$'\e[33m';B=$'\e[36m';BOLD=$'\e[1m';DIM=$'\e[2m';N=$'\e[0m';
 else R="";G="";Y="";B="";BOLD="";DIM="";N=""; fi
 STEP=0; ERRN=0
 section(){ STEP=$((STEP+1)); echo; echo "${BOLD}== Étape $STEP : $1 ==${N}"; }
@@ -302,10 +306,39 @@ else
   AUD="$SCRIPT_DIR/04-audit-bdd-php.sh"
   if [ -f "$AUD" ]; then
     echo "  -> audit de contrôle :"; echo
-    DB_APP_PASS="$DB_APP_PASS" PROBE_URL="http://localhost/index.php" bash "$AUD" || true
+    NO_REPORT=1 NO_PAUSE=1 NO_RECAP=1 DB_APP_PASS="$DB_APP_PASS" PROBE_URL="http://localhost/index.php" bash "$AUD" || true
   else
     echo "  -> lance  sudo bash 04-audit-bdd-php.sh  pour confirmer."
   fi
 fi
+# =====================================================================
+section "Récapitulatif (à noter / pour la suite)"
+# =====================================================================
+SRV_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"; SRV_IP="${SRV_IP:-IP_DU_SERVEUR}"
+SRV_USER="${SUDO_USER:-${USER:-utilisateur}}"
+echo "  Base de données   : $DB_NAME"
+echo "  Utilisateur BDD   : $DB_APP_USER"
+echo "  Mot de passe BDD  : ${DB_APP_PASS:-<voir $DOCROOT/config.php>}"
+echo "  Dossier du site   : $DOCROOT"
+echo "  Fichier de conf   : $DOCROOT/config.php"
+echo "  VirtualHost       : /etc/apache2/sites-available/dashboard.conf"
+echo "  Logs Apache       : /var/log/apache2/error.log"
+echo "  URL du dashboard  : http://$SERVER_NAME/   (ou http://$SRV_IP/)"
 echo
+echo "  ${BOLD}Transférer le site depuis TON PC (commandes scp) :${N}"
+echo "    # 1) sur ton PC, dans le dossier qui contient 'dashboard/' :"
+echo "    scp -r dashboard ${SRV_USER}@${SRV_IP}:/tmp/"
+echo "    # 2) puis ICI, sur le serveur, déposer au bon endroit :"
+echo "    sudo cp -r /tmp/dashboard/* $DOCROOT/ && sudo chown -R www-data:www-data $DOCROOT"
+echo "    # un seul fichier (ex. index.php) :"
+echo "    scp index.php ${SRV_USER}@${SRV_IP}:/tmp/ && sudo mv /tmp/index.php $DOCROOT/"
+echo "    # envoyer tout le repo (scripts) :"
+echo "    scp -r Supervision-IoT ${SRV_USER}@${SRV_IP}:~/"
+
+echo
+[ "$NO_REPORT" != 1 ] && echo "  ${DIM}Rapport enregistré dans : $REPORT${N}"
+if [ "$NO_PAUSE" != 1 ] && [ "$_TTY" = 1 ]; then
+  printf "  Appuie sur Entrée pour fermer… "; read -r _
+fi
+[ "$NO_REPORT" != 1 ] && sleep 0.2
 exit $([ "$ERRN" -eq 0 ] && echo 0 || echo 1)

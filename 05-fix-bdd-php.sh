@@ -40,17 +40,21 @@ SERVER_NAME="${SERVER_NAME:-www.dashboard.local}"
 TZ_WANTED="${TZ_WANTED:-Europe/Paris}"
 TABLE_REQUIRED="${TABLE_REQUIRED:-mesures}"
 
-DRY_RUN="${DRY_RUN:-0}"; ASSUME_YES="${ASSUME_YES:-0}"; SEED="${SEED:-0}"; TIGHTEN="${TIGHTEN:-0}"
+DRY_RUN="${DRY_RUN:-0}"; ASSUME_YES="${ASSUME_YES:-0}"; SEED="${SEED:-0}"; TIGHTEN="${TIGHTEN:-0}"; NO_REPORT="${NO_REPORT:-0}"; NO_PAUSE="${NO_PAUSE:-0}"
 # ============================================================================
 
 # ---- options ----
 for a in "$@"; do case "$a" in
   --dry-run) DRY_RUN=1 ;; --yes|-y) ASSUME_YES=1 ;; --seed) SEED=1 ;; --tighten) TIGHTEN=1 ;;
+  --no-report) NO_REPORT=1 ;; --no-pause) NO_PAUSE=1 ;;
   -h|--help) sed -n '2,30p' "$0"; exit 0 ;;
   *) echo "Option inconnue : $a"; exit 2 ;;
 esac; done
 
-if [ -t 1 ]; then R=$'\e[31m';G=$'\e[32m';Y=$'\e[33m';B=$'\e[36m';BOLD=$'\e[1m';DIM=$'\e[2m';N=$'\e[0m';
+REPORT="${REPORT:-rapport-fix-$(date +%Y%m%d-%H%M%S).txt}"
+[ -t 1 ] && _TTY=1 || _TTY=0
+if [ "$NO_REPORT" != 1 ]; then exec > >(tee >(sed -u 's/\x1b\[[0-9;]*m//g' >> "$REPORT")) 2>&1; fi
+if [ "$_TTY" = 1 ]; then R=$'\e[31m';G=$'\e[32m';Y=$'\e[33m';B=$'\e[36m';BOLD=$'\e[1m';DIM=$'\e[2m';N=$'\e[0m';
 else R="";G="";Y="";B="";BOLD="";DIM="";N=""; fi
 
 FIXED=0; KEPT=0; ERRN=0
@@ -316,10 +320,15 @@ else
   AUD="$(dirname "$0")/04-audit-bdd-php.sh"
   if [ -f "$AUD" ]; then
     echo "  -> exécution de l'audit…"; echo
-    DB_APP_PASS="$DB_APP_PASS" bash "$AUD" || true
+    NO_REPORT=1 NO_PAUSE=1 DB_APP_PASS="$DB_APP_PASS" bash "$AUD" || true
   else
     echo "  -> lance  sudo bash 04-audit-bdd-php.sh  pour confirmer."
   fi
 fi
 echo
+[ "$NO_REPORT" != 1 ] && echo "  ${DIM}Rapport enregistré dans : $REPORT${N}"
+if [ "$NO_PAUSE" != 1 ] && [ "$_TTY" = 1 ]; then
+  printf "  Appuie sur Entrée pour fermer… "; read -r _
+fi
+[ "$NO_REPORT" != 1 ] && sleep 0.2
 exit $([ "$ERRN" -eq 0 ] && echo 0 || echo 1)
