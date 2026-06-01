@@ -28,6 +28,7 @@ Partie **serveur de données** de la chaîne de supervision : stockage des mesur
 ├── 03-install-bdd-php.sh      # installation depuis zéro (Apache + MySQL + PHP)
 ├── 04-audit-bdd-php.sh        # audit (lecture seule) de la pile BDD+PHP
 ├── 05-fix-bdd-php.sh          # remédiation (corrige les problèmes détectés), idempotent
+├── 06-clean-bdd-php.sh        # nettoyage / réinitialisation (désinstalle, option --purge)
 ├── sql/
 │   └── schema.sql            # création base, tables et compte applicatif
 └── dashboard/                # code du dashboard (docroot Apache)
@@ -229,7 +230,32 @@ Options :
 
 Gestion du mot de passe applicatif : si `DB_APP_PASS` n'est pas fourni, le script le **récupère depuis `config.php`** s'il existe ; sinon il en **génère un**, l'écrit dans un `config.php` neuf et l'affiche une fois. Un `config.php` existant n'est **jamais écrasé**.
 
-> Cycle de vie : **mise en place** `03-install` → **contrôle** `04-audit` → **maintenance** `04-audit` (constat) → `05-fix --dry-run` (revue) → `05-fix` (application).
+> Cycle de vie : **mise en place** `03-install` → **contrôle** `04-audit` → **maintenance** `04-audit` (constat) → `05-fix --dry-run` (revue) → `05-fix` (application) → **nettoyage** `06-clean`.
+
+## Nettoyer / réinitialiser
+
+`06-clean-bdd-php.sh` défait ce que l'installeur a mis en place. **Destructif** : à lancer avec `sudo`, et toujours en `--dry-run` d'abord.
+
+```bash
+# voir ce qui serait supprimé, sans rien toucher :
+sudo bash 06-clean-bdd-php.sh --dry-run
+
+# nettoyage du projet (dashboard, VirtualHost, /etc/hosts, base + compte) :
+sudo bash 06-clean-bdd-php.sh
+
+# garder la base et le compte (utile si le backend les partage) :
+sudo bash 06-clean-bdd-php.sh --keep-db
+
+# remise à blanc : désinstalle Apache, PHP et MySQL en plus :
+sudo bash 06-clean-bdd-php.sh --purge
+```
+
+Deux niveaux :
+
+- **par défaut** : retire les artéfacts du projet (dossier `/var/www/dashboard`, `dashboard.conf`, entrée `/etc/hosts`, base `supervision` + compte `iot_app`) et **réactive le site Apache par défaut**. La pile LAMP reste installée.
+- **`--purge`** : `apt purge` d'Apache/PHP/MySQL + `autoremove` + suppression des dossiers résiduels. **Attention** : cela touche **toute la machine** (toutes les bases, tous les sites), pas seulement le projet — une **double confirmation** (taper `SUPPRIMER`) est demandée.
+
+Sécurités : garde-fou qui refuse un `DOCROOT` système (`/`, `/var/www`, `/etc`…), `--keep-db` pour préserver la base, et comme les autres scripts, **rapport** (`rapport-clean-*.txt`) + **pause** en fin d'exécution. Pour tout réinstaller ensuite : `sudo bash 03-install-bdd-php.sh`.
 
 ## Dépannage rapide
 
