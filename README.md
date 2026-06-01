@@ -25,6 +25,7 @@ Partie **serveur de données** de la chaîne de supervision : stockage des mesur
 ```
 .
 ├── README.md
+├── 03-install-bdd-php.sh      # installation depuis zéro (Apache + MySQL + PHP)
 ├── 04-audit-bdd-php.sh        # audit (lecture seule) de la pile BDD+PHP
 ├── 05-fix-bdd-php.sh          # remédiation (corrige les problèmes détectés), idempotent
 ├── sql/
@@ -53,7 +54,33 @@ sudo apt install apache2 mysql-server php libapache2-mod-php php-mysql
 
 ## Installation
 
-### 1. Base de données
+### Option A — script automatique (recommandé)
+
+`03-install-bdd-php.sh` installe **toute la pile depuis zéro** (Apache + MySQL + PHP), crée la base/les tables/le compte, déploie un dashboard et configure le VirtualHost. Idempotent, à lancer avec `sudo`.
+
+```bash
+# 1) voir le plan sans rien installer :
+sudo bash 03-install-bdd-php.sh --dry-run
+
+# 2) installer (demande confirmation) :
+sudo bash 03-install-bdd-php.sh
+
+# variantes :
+sudo bash 03-install-bdd-php.sh --yes        # sans confirmation
+sudo bash 03-install-bdd-php.sh --no-seed    # sans données de test
+```
+
+Ce qu'il fait : paquets (`apache2`, `mysql-server`, `php`, `libapache2-mod-php`, `php-mysql`), fuseau horaire, services activés au démarrage, sécurisation minimale de MySQL, base `supervision` + tables + compte `iot_app` (droits `SELECT`/`INSERT`), dashboard + VirtualHost, et **quelques mesures de test** par défaut pour voir l'affichage tout de suite. Il termine en lançant l'audit.
+
+- Si le repo contient `sql/schema.sql`, il l'**utilise** ; sinon il applique un schéma intégré.
+- Si le repo contient un dossier `dashboard/`, c'est **le tien** qui est déployé ; sinon un dashboard minimal fonctionnel (page auto-rafraîchie + `data.php`) est généré.
+- Le mot de passe applicatif : fourni via `DB_APP_PASS`, sinon **généré** et écrit dans `config.php` (affiché une fois). Un `config.php` existant n'est jamais écrasé.
+
+> Après installation, ouvre `http://www.dashboard.local/` (l'entrée `/etc/hosts` est ajoutée automatiquement) ou `http://localhost/`.
+
+### Option B — manuelle (pour comprendre / personnaliser)
+
+#### 1. Base de données
 
 `sql/schema.sql` :
 
@@ -92,7 +119,7 @@ sudo mysql < sql/schema.sql
 
 > Change `ChangeMoi_MotDePasse` par un vrai mot de passe et reporte-le dans `dashboard/config.php`.
 
-### 2. Dashboard PHP
+#### 2. Dashboard PHP
 
 `dashboard/config.php` (connexion centralisée, erreurs en exceptions) :
 
@@ -198,7 +225,7 @@ Options :
 
 Gestion du mot de passe applicatif : si `DB_APP_PASS` n'est pas fourni, le script le **récupère depuis `config.php`** s'il existe ; sinon il en **génère un**, l'écrit dans un `config.php` neuf et l'affiche une fois. Un `config.php` existant n'est **jamais écrasé**.
 
-> Workflow conseillé : `04-audit` (constat) → `05-fix --dry-run` (revue du plan) → `05-fix` (application) → l'audit final confirme.
+> Cycle de vie : **mise en place** `03-install` → **contrôle** `04-audit` → **maintenance** `04-audit` (constat) → `05-fix --dry-run` (revue) → `05-fix` (application).
 
 ## Dépannage rapide
 
