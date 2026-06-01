@@ -29,6 +29,7 @@ Partie **serveur de données** de la chaîne de supervision : stockage des mesur
 ├── 04-audit-bdd-php.sh        # audit (lecture seule) de la pile BDD+PHP
 ├── 05-fix-bdd-php.sh          # remédiation (corrige les problèmes détectés), idempotent
 ├── 06-clean-bdd-php.sh        # nettoyage / réinitialisation (désinstalle, option --purge)
+├── 07-dashboard-bdd-php.sh    # génère un dashboard PHP sur mesure (choix des capteurs)
 ├── sql/
 │   └── schema.sql            # création base, tables et compte applicatif
 └── dashboard/                # code du dashboard (docroot Apache)
@@ -169,6 +170,33 @@ sudo systemctl reload apache2
 
 ---
 
+## Générer un dashboard sur mesure
+
+`07-dashboard-bdd-php.sh` construit une page de supervision adaptée aux capteurs que tu choisis, puis la déploie dans Apache.
+
+```bash
+# interactif : il pose les questions (capteurs, titre, rafraîchissement, graphique) :
+sudo bash 07-dashboard-bdd-php.sh
+
+# prévisualiser sans rien écrire :
+sudo bash 07-dashboard-bdd-php.sh --dry-run
+
+# non interactif :
+sudo SENSORS="temperature humidite co2" TITLE="Salle serveur" CHART=temperature \
+     bash 07-dashboard-bdd-php.sh --yes
+```
+
+Il génère dans le `DOCROOT` :
+
+- `sensors.php` — les capteurs et options choisis (modifiable à la main ensuite) ;
+- `index.php` — la page : une carte « dernière valeur » par capteur + le tableau des mesures récentes + un graphique optionnel ; rendue côté serveur et auto-rafraîchie ;
+- `data.php` — endpoint JSON (utilisé par le graphique) ;
+- `config.php` — connexion PDO, créé **seulement s'il manque** (jamais écrasé).
+
+Capteurs proposés : température, humidité, pression, CO₂, luminosité, présence — plus des types personnalisés. Le dashboard lit la table `mesures` en filtrant sur le `type` choisi ; il reste vide tant qu'aucune donnée de ce type n'est présente. VirtualHost mis en place automatiquement, plus rapport + pause comme les autres scripts.
+
+> Le graphique utilise Chart.js via CDN : il faut un accès Internet **côté navigateur** pour l'afficher. Les cartes et le tableau, eux, fonctionnent hors-ligne.
+
 ## Vérifier que tout est en ordre — script d'audit
 
 `04-audit-bdd-php.sh` **n'écrit rien** : il analyse l'installation, teste la connexion PDO de bout en bout et affiche un bilan `PASS / WARN / FAIL` avec les commandes de correction.
@@ -230,7 +258,7 @@ Options :
 
 Gestion du mot de passe applicatif : si `DB_APP_PASS` n'est pas fourni, le script le **récupère depuis `config.php`** s'il existe ; sinon il en **génère un**, l'écrit dans un `config.php` neuf et l'affiche une fois. Un `config.php` existant n'est **jamais écrasé**.
 
-> Cycle de vie : **mise en place** `03-install` → **contrôle** `04-audit` → **maintenance** `04-audit` (constat) → `05-fix --dry-run` (revue) → `05-fix` (application) → **nettoyage** `06-clean`.
+> Cycle de vie : **mise en place** `03-install` (+ `07-dashboard` pour la page) → **contrôle** `04-audit` → **maintenance** `04-audit` (constat) → `05-fix --dry-run` (revue) → `05-fix` (application) → **nettoyage** `06-clean`.
 
 ## Nettoyer / réinitialiser
 
