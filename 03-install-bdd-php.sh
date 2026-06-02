@@ -22,6 +22,12 @@
 #     sudo bash 03-install-bdd-php.sh               # installe (demande confirmation)
 #     sudo bash 03-install-bdd-php.sh --yes         # installe sans confirmation
 #     sudo bash 03-install-bdd-php.sh --no-seed     # sans données de test
+#     sudo bash 03-install-bdd-php.sh --ask         # force la demande des identifiants
+#
+#   En mode interactif (sans --yes), le script DEMANDE le nom de la base,
+#   l'utilisateur applicatif et le mot de passe (saisie masquée, confirmation).
+#   Laisser vide = valeur par défaut / mot de passe généré. Tout reste
+#   pilotable sans question via les variables d'env ci-dessous + --yes.
 #
 #   Paramètres (variables d'env) :
 #     DB_NAME, DB_APP_USER, DB_APP_PASS, DB_ROOT_PASS, DB_HOST,
@@ -39,12 +45,13 @@ DOCROOT="${DOCROOT:-/var/www/dashboard}"
 SERVER_NAME="${SERVER_NAME:-www.dashboard.local}"
 TZ_WANTED="${TZ_WANTED:-Europe/Paris}"
 
-DRY_RUN="${DRY_RUN:-0}"; ASSUME_YES="${ASSUME_YES:-0}"; SEED="${SEED:-1}"; NO_REPORT="${NO_REPORT:-0}"; NO_PAUSE="${NO_PAUSE:-0}"
+DRY_RUN="${DRY_RUN:-0}"; ASSUME_YES="${ASSUME_YES:-0}"; SEED="${SEED:-1}"; NO_REPORT="${NO_REPORT:-0}"; NO_PAUSE="${NO_PAUSE:-0}"; ASK="${ASK:-0}"
+PWD_SET=0; [ -n "$DB_APP_PASS" ] && PWD_SET=1   # mot de passe fourni explicitement (env) ?
 # ============================================================================
 
 for a in "$@"; do case "$a" in
   --dry-run) DRY_RUN=1 ;; --yes|-y) ASSUME_YES=1 ;; --no-seed) SEED=0 ;; --seed) SEED=1 ;;
-  --no-report) NO_REPORT=1 ;; --no-pause) NO_PAUSE=1 ;;
+  --no-report) NO_REPORT=1 ;; --no-pause) NO_PAUSE=1 ;; --ask) ASK=1 ;;
   -h|--help) sed -n '2,40p' "$0"; exit 0 ;;
   *) echo "Option inconnue : $a"; exit 2 ;;
 esac; done
@@ -72,6 +79,22 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 echo "${BOLD}Installation BDD + PHP + dashboard (depuis zéro)${N}"
 [ "$DRY_RUN" = 1 ] && echo "${Y}MODE SIMULATION (--dry-run) : rien ne sera installé.${N}"
 echo "${DIM}base=$DB_NAME  user=$DB_APP_USER  docroot=$DOCROOT  vhost=$SERVER_NAME  seed=$SEED${N}"
+ask_credentials(){
+  echo
+  echo "${BOLD}Identifiants de la base de données${N} ${DIM}(Entrée = valeur par défaut)${N}"
+  printf "  Nom de la base [%s] : " "$DB_NAME"; read -r _r; DB_NAME="${_r:-$DB_NAME}"
+  printf "  Utilisateur applicatif [%s] : " "$DB_APP_USER"; read -r _r; DB_APP_USER="${_r:-$DB_APP_USER}"
+  local _pdef; if [ -f "$DOCROOT/config.php" ]; then _pdef="garder celui de config.php"; else _pdef="généré automatiquement"; fi
+  while :; do
+    printf "  Mot de passe de %s [Entrée = %s] : " "$DB_APP_USER" "$_pdef"; read -rs _p1; echo
+    [ -z "$_p1" ] && break
+    printf "  Confirme le mot de passe : "; read -rs _p2; echo
+    if [ "$_p1" = "$_p2" ]; then DB_APP_PASS="$_p1"; PWD_SET=1; break
+    else echo "  ${Y}Les deux saisies diffèrent, recommence.${N}"; fi
+  done
+}
+if [ "$_TTY" = 1 ] && { [ "$ASK" = 1 ] || [ "$ASSUME_YES" != 1 ]; }; then ask_credentials; fi
+
 if [ "$DRY_RUN" != 1 ] && [ "$ASSUME_YES" != 1 ]; then
   printf "Installer la pile Apache + MySQL + PHP sur cette machine ? [y/N] "
   read -r rep; case "$rep" in y|Y|o|O) ;; *) echo "Annulé."; exit 0 ;; esac
@@ -140,6 +163,9 @@ SQL
 fi
 
 # ---- mot de passe applicatif ----
+if [ -z "$DB_APP_PASS" ] && [ -r "$DOCROOT/config.php" ]; then
+  DB_APP_PASS="$($SUDO grep -oE "DB_PASS[[:space:]]*=[[:space:]]*['\"][^'\"]+" "$DOCROOT/config.php" 2>/dev/null | sed -E "s/.*['\"]//" | head -1)"
+fi
 if [ -z "$DB_APP_PASS" ]; then
   if have openssl; then DB_APP_PASS="$(openssl rand -base64 12 | tr -d '/+=' | cut -c1-16)"; else DB_APP_PASS="Iot$(date +%s | tail -c6)!"; fi
   GEN_PASS=1
@@ -249,8 +275,8 @@ $rows = $pdo->query("SELECT capteur,type,valeur,date_mesure
 PHP
 fi
 
-# config.php : créé seulement s'il manque (jamais écrasé)
-if [ ! -f "$DOCROOT/config.php" ] || [ "$DRY_RUN" = 1 ]; then
+# config.php : créé s'il manque, ou réécrit si un mot de passe a été fourni explicitement
+if [ ! -f "$DOCROOT/config.php" ] || [ "$PWD_SET" = 1 ] || [ "$DRY_RUN" = 1 ]; then
   act "écriture de config.php (connexion PDO)"
   write_file "$DOCROOT/config.php" <<PHP
 <?php

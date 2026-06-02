@@ -20,6 +20,167 @@ Partie **serveur de données** de la chaîne de supervision : stockage des mesur
 
 ---
 
+## Schéma de la base de données
+
+La base s'appelle **`supervision`**. Elle contient **deux tables** et utilise **un seul compte applicatif** (`iot_app`). Voici le modèle.
+
+```
+┌──────────────────────────────┐                ┌────────────────────────────────────┐
+│ capteurs                     │                │ mesures                            │
+├──────────────────────────────┤   lien logique ├────────────────────────────────────┤
+│ id           INT  PK  auto   │   (par le code)│ id           INT   PK  auto        │
+│ code         VARCHAR(50) ────┼───────────────►│ capteur      VARCHAR(50)           │
+│ emplacement  VARCHAR(100)    │                │ type         VARCHAR(30)           │
+└──────────────────────────────┘                │ valeur       FLOAT                 │
+                                                 │ date_mesure  DATETIME (auto)       │
+                                                 └────────────────────────────────────┘
+```
+
+> `mesures.capteur` correspond à `capteurs.code`. C'est un lien **logique** (pas une clé étrangère stricte) : la table `mesures` peut très bien fonctionner seule, `capteurs` sert juste à décrire les appareils.
+
+Le SQL exact (ce que crée le script) :
+
+```sql
+CREATE TABLE capteurs (
+  id          INT AUTO_INCREMENT PRIMARY KEY,
+  code        VARCHAR(50) UNIQUE NOT NULL,   -- identifiant du capteur, ex: 'esp32-salle1'
+  emplacement VARCHAR(100)                   -- ex: 'Salle serveur'
+);
+
+CREATE TABLE mesures (
+  id          INT AUTO_INCREMENT PRIMARY KEY,
+  capteur     VARCHAR(50),                   -- code du capteur émetteur
+  type        VARCHAR(30),                   -- grandeur mesurée: 'temperature', 'co2'...
+  valeur      FLOAT,                          -- la valeur relevée
+  date_mesure DATETIME DEFAULT CURRENT_TIMESTAMP,  -- horodatage automatique
+  INDEX idx_date (date_mesure)
+);
+```
+
+Chaque ligne de `mesures` = **une valeur relevée à un instant donné**. Exemple : `('esp32-salle1', 'temperature', 22.4, '2026-06-01 14:03:00')` se lit « le capteur *esp32-salle1* a mesuré une *température* de *22.4* le *1er juin à 14h03* ».
+
+### Qui fournit quoi ?
+
+- **Toi (administrateur), via le script** : tu lances `03-install` avec `sudo`. C'est lui qui crée la base, les tables et le compte. Le **mot de passe root MySQL n'est pas demandé** (connexion par socket `sudo mysql`).
+- **Le compte applicatif `iot_app`** (c'est *le* « user à fournir », celui que le script te demande) : il sert à la fois au **dashboard** (qui lit) et au **backend** (qui écrit). Ses droits sont **volontairement limités** :
+
+  ```sql
+  CREATE USER 'iot_app'@'localhost' IDENTIFIED BY 'ton-mot-de-passe';
+  GRANT SELECT, INSERT ON supervision.* TO 'iot_app'@'localhost';
+  ```
+
+  `SELECT` = lecture (pour afficher le dashboard), `INSERT` = écriture (pour enregistrer les mesures). Pas de `DROP`/`DELETE`/`UPDATE` : même si le mot de passe fuite, on ne peut pas effacer la base. Ce compte et son mot de passe sont stockés dans `config.php`.
+- **Le binôme (backend MQTT/C++)** : se connecte avec `iot_app` et fait des `INSERT` dans `mesures` à chaque relevé.
+
+### Valeurs de `type` attendues
+
+Le dashboard filtre sur la colonne `type`. Il faut donc que le backend **écrive les mêmes mots-clés** que ceux choisis dans le dashboard. Conventions du projet : `temperature`, `humidite`, `pression`, `co2`, `luminosite`, `presence`. Si le backend insère `temp` mais que le dashboard attend `temperature`, la carte restera vide.
+
+Tu peux tout créer à la main avec le fichier fourni (`sql/schema.sql`) — sinon `03-install` le fait pour toi :
+
+```bash
+sudo mysql < sql/schema.sql        # crée base + tables + compte + données d'exemple
+```
+
+## Exemple complet (de zéro au dashboard)
+
+Un exemple concret avec des valeurs réelles, du même bout à l'autre. Reprends-les telles quelles ou remplace-les par les tiennes.
+
+| Élément | Valeur d'exemple | Où ça vit |
+|---|---|---|
+| Base de données | `supervision` | MySQL |
+| Utilisateur applicatif | `iot_app` | MySQL + `config.php` |
+| Mot de passe | `Iot2026Lab!` | `config.php` (droits 640) |
+| Hôte BDD | `localhost` | — |
+| Dossier du site | `/var/www/dashboard` | disque du serveur |
+| Nom de domaine / URL | `www.dashboard.local` → `http://www.dashboard.local` | VirtualHost + `/etc/hosts` |
+| Capteurs affichés | `temperature`, `humidite`, `co2` | dashboard |
+
+### 1. Tout installer en une commande
+
+```bash
+sudo DB_NAME=supervision DB_APP_USER=iot_app DB_APP_PASS='Iot2026Lab!' \
+     DOCROOT=/var/www/dashboard SERVER_NAME=www.dashboard.local \
+     bash 03-install-bdd-php.sh --yes
+```
+
+### 2. Ce que ça crée côté base (équivalent SQL)
+
+```sql
+CREATE DATABASE supervision CHARACTER SET utf8mb4;
+USE supervision;
+
+CREATE TABLE capteurs (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  code VARCHAR(50) UNIQUE NOT NULL,
+  emplacement VARCHAR(100)
+);
+CREATE TABLE mesures (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  capteur VARCHAR(50),
+  type VARCHAR(30),
+  valeur FLOAT,
+  date_mesure DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE USER 'iot_app'@'localhost' IDENTIFIED BY 'Iot2026Lab!';
+GRANT SELECT, INSERT ON supervision.* TO 'iot_app'@'localhost';
+FLUSH PRIVILEGES;
+```
+
+### 3. Le `config.php` déposé dans le dashboard
+
+```php
+<?php
+$DB_HOST = 'localhost';
+$DB_NAME = 'supervision';
+$DB_USER = 'iot_app';
+$DB_PASS = 'Iot2026Lab!';
+$pdo = new PDO("mysql:host=$DB_HOST;dbname=$DB_NAME;charset=utf8mb4",
+               $DB_USER, $DB_PASS, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+```
+
+### 4. Générer la page pour 3 capteurs
+
+```bash
+sudo SENSORS="temperature humidite co2" TITLE="Salle serveur" CHART=temperature \
+     DOCROOT=/var/www/dashboard SERVER_NAME=www.dashboard.local \
+     bash 07-dashboard-bdd-php.sh --yes
+```
+
+### 5. Insérer quelques mesures (sinon la page est vide)
+
+```bash
+sudo mysql supervision -e "INSERT INTO mesures (capteur,type,valeur) VALUES
+ ('esp32-salle1','temperature',22.4),
+ ('esp32-salle1','humidite',48),
+ ('esp32-salle1','co2',780);"
+```
+
+### 6. Ouvrir le dashboard
+
+- **Sur le serveur** : l'entrée est déjà dans `/etc/hosts` → ouvre `http://www.dashboard.local`.
+- **Depuis un autre PC** : ajoute la ligne suivante dans le fichier `hosts` du PC (remplace par l'IP réelle du serveur), puis ouvre l'URL :
+
+  ```
+  192.168.1.50   www.dashboard.local
+  ```
+
+### 7. Vérifier que toute la chaîne fonctionne
+
+```bash
+# la base contient bien des mesures :
+mysql -u iot_app -p'Iot2026Lab!' supervision -e "SELECT * FROM mesures ORDER BY id DESC LIMIT 5;"
+
+# la page répond :
+curl -s http://www.dashboard.local | head
+
+# bilan automatique PASS / WARN / FAIL :
+sudo bash 04-audit-bdd-php.sh
+```
+
+À ce stade : la base `supervision` existe, le compte `iot_app` y a accès en lecture/écriture, le dashboard est servi sur `http://www.dashboard.local` et affiche une carte par capteur + le tableau des dernières mesures. Le backend du binôme n'a plus qu'à se connecter avec `iot_app` / `Iot2026Lab!` et faire des `INSERT` dans `mesures`.
+
 ## Arborescence du repo
 
 ```
@@ -77,6 +238,7 @@ Ce qu'il fait : paquets (`apache2`, `mysql-server`, `php`, `libapache2-mod-php`,
 - Si le repo contient `sql/schema.sql`, il l'**utilise** ; sinon il applique un schéma intégré.
 - Si le repo contient un dossier `dashboard/`, c'est **le tien** qui est déployé ; sinon un dashboard minimal fonctionnel (page auto-rafraîchie + `data.php`) est généré.
 - Le mot de passe applicatif : fourni via `DB_APP_PASS`, sinon **généré** et écrit dans `config.php` (affiché une fois). Un `config.php` existant n'est jamais écrasé.
+- **En mode interactif** (sans `--yes`), le script **demande** le nom de la base, l'utilisateur applicatif et le mot de passe (saisie **masquée** avec confirmation). Laisser vide = valeur par défaut / mot de passe généré. `--ask` force la question même avec `--yes` ; à l'inverse, fournir les variables d'env + `--yes` installe sans aucune question.
 
 À la fin, le script **n'efface pas l'écran** : il **écrit un rapport horodaté** (`rapport-install-*.txt`, sans codes couleur), **marque une pause** (« Appuie sur Entrée pour fermer… ») et affiche un **récapitulatif** — nom de la base, utilisateur BDD, mot de passe, dossier du site, URL, VirtualHost — suivi des **commandes `scp`** pour transférer le site depuis ton PC vers le serveur. Options : `--no-report`, `--no-pause`.
 
